@@ -55,6 +55,13 @@ class SCAParser:
             List of SCAVulnerability objects
         """
         try:
+            # Remove BOM (Byte Order Mark) if present
+            if report_content.startswith('\ufeff'):
+                report_content = report_content[1:]
+
+            # Strip whitespace
+            report_content = report_content.strip()
+
             data = json.loads(report_content)
 
             # Detect report format

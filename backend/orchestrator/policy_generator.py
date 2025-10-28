@@ -147,7 +147,7 @@ class PolicyGeneratorOrchestrator:
         # Parse SCA report
         if sca_path and os.path.exists(sca_path):
             print(f"\nParsing SCA report: {sca_path}")
-            with open(sca_path, 'r') as f:
+            with open(sca_path, 'r', encoding='utf-8-sig') as f:
                 sca_content = f.read()
             sca_vulns = self.sca_parser.parse(sca_content)
             print(f"Found {len(sca_vulns)} SCA vulnerabilities")
