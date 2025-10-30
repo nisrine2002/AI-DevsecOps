@@ -51,13 +51,61 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/juice-shop/juice-shop.git test-app
 
-      - name: Run npm audit SCA scan on Juice Shop
+      - name: Install Trivy universal SCA scanner
+        run: |
+          sudo apt-get install wget apt-transport-https gnupg lsb-release -y
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+          echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install trivy -y
+
+      - name: Run Trivy SCA scan on Juice Shop
         run: |
           cd test-app
-          npm audit --json > ../sca_report.json 2>&1 || true
-          if [ ! -s ../sca_report.json ]; then
-            echo '{"vulnerabilities": {}}' > ../sca_report.json
-          fi
+          trivy fs --format json --scanners vuln --output ../sca_report_raw.json . || echo '{"Results": []}' > ../sca_report_raw.json
+
+      - name: Convert Trivy to npm audit format
+        run: |
+          python3 -c "
+          import json
+
+          # Read Trivy output
+          try:
+              with open('sca_report_raw.json', 'r') as f:
+                  trivy_data = json.load(f)
+          except:
+              trivy_data = {'Results': []}
+
+          # Convert to npm audit format
+          vulnerabilities = {}
+          for result in trivy_data.get('Results', []):
+              for vuln in result.get('Vulnerabilities', []):
+                  pkg_name = vuln.get('PkgName', 'unknown')
+                  vulnerabilities[pkg_name] = {
+                      'name': pkg_name,
+                      'severity': vuln.get('Severity', 'MEDIUM').lower(),
+                      'via': [{
+                          'title': vuln.get('Title', 'Vulnerability'),
+                          'url': vuln.get('PrimaryURL', ''),
+                          'cves': [vuln.get('VulnerabilityID', '')]
+                      }],
+                      'range': '*'
+                  }
+
+          output = {
+              'vulnerabilities': vulnerabilities,
+              'metadata': {
+                  'vulnerabilities': {
+                      'total': len(vulnerabilities)
+                  }
+              }
+          }
+
+          with open('sca_report.json', 'w') as f:
+              json.dump(output, f, indent=2)
+
+          print(f'Converted {len(vulnerabilities)} vulnerabilities to npm audit format')
+          "
 
       - name: Upload SCA report
         uses: actions/upload-artifact@v4
