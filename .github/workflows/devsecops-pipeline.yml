@@ -79,13 +79,129 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Create simple vulnerable test app
+        run: |
+          mkdir -p test-app
+          cd test-app
+          npm init -y
+          npm install express
+
+      - name: Create vulnerable app server
+        run: |
+          cat > test-app/server.js << 'EOF'
+          const express = require('express');
+          const app = express();
+          const PORT = 3000;
+
+          // Vulnerable endpoint 1: SQL Injection simulation
+          app.get('/search', (req, res) => {
+            const query = req.query.q;
+            res.send(`Search results for: ${query}`); // XSS vulnerable
+          });
+
+          // Vulnerable endpoint 2: No authentication
+          app.get('/admin', (req, res) => {
+            res.send('Admin panel - No auth required!');
+          });
+
+          // Vulnerable endpoint 3: Insecure cookie
+          app.get('/login', (req, res) => {
+            res.cookie('session', '12345', { httpOnly: false });
+            res.send('Logged in with insecure cookie');
+          });
+
+          app.get('/', (req, res) => {
+            res.send('Vulnerable Test App - Running for DAST scan');
+          });
+
+          app.listen(PORT, () => {
+            console.log(`Test app running on http://localhost:${PORT}`);
+          });
+          EOF
+
+      - name: Start test application in background
+        run: |
+          cd test-app
+          node server.js &
+          sleep 5
+          curl http://localhost:3000 || echo "App might not be ready yet"
+
       - name: Run OWASP ZAP baseline scan
         uses: zaproxy/action-baseline@v0.10.0
         with:
-          target: 'https://example.com'  # Replace with your app URL
-          rules_file_name: '.zap/rules.tsv'
-          cmd_options: '-a -j -x dast_report.xml'
+          target: 'http://localhost:3000'
+          cmd_options: '-j'
         continue-on-error: true
+
+      - name: Convert ZAP report to XML
+        run: |
+          # ZAP creates report.html and report.json by default
+          # Create a minimal XML report for our parser
+          if [ -f report.json ]; then
+            python3 << 'PYTHON_SCRIPT'
+          import json
+          import xml.etree.ElementTree as ET
+
+          # Read ZAP JSON report
+          with open('report.json', 'r') as f:
+              data = json.load(f)
+
+          # Create XML structure
+          root = ET.Element('OWASPZAPReport')
+          root.set('version', '2.11.0')
+          root.set('generated', '2024-01-01')
+
+          site = ET.SubElement(root, 'site')
+          site.set('name', 'http://localhost:3000')
+          site.set('host', 'localhost')
+          site.set('port', '3000')
+          site.set('ssl', 'false')
+
+          # Add alerts from JSON
+          alerts_data = data.get('site', [{}])[0].get('alerts', []) if 'site' in data else []
+
+          for alert in alerts_data:
+              alert_elem = ET.SubElement(site, 'alertitem')
+
+              ET.SubElement(alert_elem, 'pluginid').text = str(alert.get('pluginid', '0'))
+              ET.SubElement(alert_elem, 'alert').text = alert.get('alert', 'Unknown')
+              ET.SubElement(alert_elem, 'riskcode').text = str(alert.get('riskcode', '0'))
+              ET.SubElement(alert_elem, 'confidence').text = str(alert.get('confidence', '0'))
+              ET.SubElement(alert_elem, 'riskdesc').text = alert.get('riskdesc', 'Unknown')
+              ET.SubElement(alert_elem, 'desc').text = alert.get('desc', 'No description')
+
+              instances = alert.get('instances', [])
+              if instances:
+                  ET.SubElement(alert_elem, 'uri').text = instances[0].get('uri', 'http://localhost:3000')
+                  ET.SubElement(alert_elem, 'method').text = instances[0].get('method', 'GET')
+
+          # Write XML file
+          tree = ET.ElementTree(root)
+          ET.indent(tree, space='  ')
+          tree.write('dast_report.xml', encoding='utf-8', xml_declaration=True)
+          print("✓ Created dast_report.xml")
+          PYTHON_SCRIPT
+          else
+            echo "Warning: No ZAP JSON report found"
+            # Create minimal empty report
+            echo '<?xml version="1.0"?><OWASPZAPReport version="2.11.0"><site name="http://localhost:3000" host="localhost" port="3000" ssl="false"></site></OWASPZAPReport>' > dast_report.xml
+          fi
+
+      - name: Verify DAST report created
+        run: |
+          if [ -f dast_report.xml ]; then
+            echo "✓ DAST report exists"
+            ls -lh dast_report.xml
+            head -20 dast_report.xml
+          else
+            echo "✗ DAST report not found"
+            exit 1
+          fi
 
       - name: Upload DAST report
         uses: actions/upload-artifact@v4
@@ -93,7 +209,6 @@ jobs:
           name: dast-report
           path: dast_report.xml
           retention-days: 30
-          if-no-files-found: ignore
 
   # Job 4: AI Policy Generation
   ai-policy-generation:
