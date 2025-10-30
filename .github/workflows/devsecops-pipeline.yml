@@ -93,6 +93,7 @@ jobs:
           name: dast-report
           path: dast_report.xml
           retention-days: 30
+          if-no-files-found: ignore
 
   # Job 4: AI Policy Generation
   ai-policy-generation:
