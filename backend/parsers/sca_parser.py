@@ -65,8 +65,8 @@ class SCAParser:
             data = json.loads(report_content)
 
             # Detect report format
-            if 'vulnerabilities' in data and 'metadata' in data:
-                # npm audit format
+            if 'vulnerabilities' in data:
+                # npm audit format (with or without metadata)
                 return self._parse_npm_audit(data)
             elif 'dependencies' in data:
                 # pip-audit format
