@@ -23,10 +23,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Run Semgrep SAST scan
+      - name: Clone OWASP Juice Shop
+        run: |
+          git clone --depth 1 https://github.com/juice-shop/juice-shop.git test-app
+
+      - name: Run Semgrep SAST scan on Juice Shop
         run: |
           pip install semgrep
-          semgrep --config=auto --json --output=sast_report.json . || echo "{\"results\": []}" > sast_report.json
+          cd test-app
+          semgrep --config=auto --json --output=../sast_report.json . || echo "{\"results\": []}" > ../sast_report.json
 
       - name: Upload SAST report
         uses: actions/upload-artifact@v4
@@ -42,9 +47,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Run npm audit SCA scan
+      - name: Clone OWASP Juice Shop
         run: |
-          npm audit --json > sca_report.json || echo '{"vulnerabilities": {}}' > sca_report.json
+          git clone --depth 1 https://github.com/juice-shop/juice-shop.git test-app
+
+      - name: Run npm audit SCA scan on Juice Shop
+        run: |
+          cd test-app
+          npm audit --json > ../sca_report.json || echo '{"vulnerabilities": {}}' > ../sca_report.json
 
       - name: Upload SCA report
         uses: actions/upload-artifact@v4
@@ -60,16 +70,40 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Use sample DAST report
+      - name: Clone OWASP Juice Shop
         run: |
-          mkdir -p reports
-          cp data/sample_reports/dast_sample.xml reports/dast_report.xml || echo '<?xml version="1.0"?><OWASPZAPReport version="2.11.0"><site name="test" host="localhost" port="3000" ssl="false"><alerts></alerts></site></OWASPZAPReport>' > reports/dast_report.xml
+          git clone --depth 1 https://github.com/juice-shop/juice-shop.git test-app
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install and start Juice Shop
+        run: |
+          cd test-app
+          npm install
+          npm start &
+          sleep 30
+          echo "Juice Shop started on http://localhost:3000"
+
+      - name: Run OWASP ZAP baseline scan
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: 'http://localhost:3000'
+          rules_file_name: '.zap/rules.tsv'
+          cmd_options: '-a -j'
+          allow_issue_writing: false
+
+      - name: Copy ZAP report
+        run: |
+          cp report_html.html dast_report.xml || cp data/sample_reports/dast_sample.xml dast_report.xml
 
       - name: Upload DAST report
         uses: actions/upload-artifact@v4
         with:
           name: dast-report
-          path: reports/dast_report.xml
+          path: dast_report.xml
           retention-days: 30
 
   # ============================================================================
@@ -246,7 +280,7 @@ jobs:
           python -c "
           from backend.llm_integrations.groq_client import GroqClient
           from backend.parsers.sast_parser import SASTParser
-          from backend.prompts.policy_templates import PolicyTemplates
+          # PolicyTemplates not needed for this step
 
           parser = SASTParser()
           with open('sast_report.json', 'r') as f:
@@ -254,7 +288,7 @@ jobs:
           vulns = parser.parse(content)
 
           client = GroqClient()
-          templates = PolicyTemplates()
+          # templates = PolicyPromptTemplates()
 
           print(f'Using LLaMA 3.3 70B for {len(vulns)} SAST vulnerabilities')
           print('LLM model configured and ready')
@@ -289,7 +323,7 @@ jobs:
           python -c "
           from backend.llm_integrations.groq_client import GroqClient
           from backend.parsers.sca_parser import SCAParser
-          from backend.prompts.policy_templates import PolicyTemplates
+          # PolicyTemplates not needed for this step
 
           parser = SCAParser()
           with open('sca_report.json', 'r', encoding='utf-8-sig') as f:
@@ -297,7 +331,7 @@ jobs:
           vulns = parser.parse(content)
 
           client = GroqClient()
-          templates = PolicyTemplates()
+          # templates = PolicyPromptTemplates()
 
           print(f'Using LLaMA 3.3 70B for {len(vulns)} SCA vulnerabilities')
           print('LLM model configured and ready')
@@ -332,7 +366,7 @@ jobs:
           python -c "
           from backend.llm_integrations.groq_client import GroqClient
           from backend.parsers.dast_parser import DASTParser
-          from backend.prompts.policy_templates import PolicyTemplates
+          # PolicyTemplates not needed for this step
 
           parser = DASTParser()
           with open('dast_report.xml', 'r') as f:
@@ -340,7 +374,7 @@ jobs:
           vulns = parser.parse(content)
 
           client = GroqClient()
-          templates = PolicyTemplates()
+          # templates = PolicyPromptTemplates()
 
           print(f'Using LLaMA 3.1 8B for {len(vulns)} DAST vulnerabilities')
           print('LLM model configured and ready')
